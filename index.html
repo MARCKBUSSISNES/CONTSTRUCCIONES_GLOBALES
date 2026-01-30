@@ -267,6 +267,8 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
           <button id="payBtn">Cobrar</button>
           <button id="clearCartBtn" class="ghost">Limpiar</button>
+          <button id="adminToggleBtn" class="ghost">MODO ADMIN OFF</button>
+
         </div>
 
         <div class="small-note">Ticket 80mm imprimible.</div>
@@ -304,9 +306,55 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
         <button id="exportProductsBtn" class="ghost">Descargar inventario PDF</button>
       </div>
 
+
+      <div class="sub-card" id="invSummary" style="margin-top:12px;">
+        <h3 style="margin-bottom:6px;">Resumen de inventario</h3>
+        <div class="small-note">Inversión total (costo x stock):</div>
+        <div id="invInvestment" style="font-size:1.4rem;font-weight:800;color:var(--green);">Q0.00</div>
+      </div>
+
       <div id="editHint" class="small-note" style="margin-top:8px;display:none;">
         Editando producto: <strong id="editNameLabel"></strong> (se guardará con código 3336)
       </div>
+
+
+      <div class="sub-card" id="purchasePanel">
+        <h2>Registrar compras (incrementa inventario)</h2>
+        <div class="small-note">Selecciona un producto existente y registra la compra para sumar stock. (Requiere código 12345)</div>
+
+        <div class="grid2">
+          <div>
+            <label>Producto</label>
+            <select id="buyProductSelect">
+              <option value="">-- Seleccionar producto --</option>
+            </select>
+          </div>
+          <div>
+            <label>Cantidad a ingresar</label>
+            <input id="buyQty" type="number" min="1" step="1" value="1"/>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label>Costo unitario (opcional)</label>
+            <input id="buyUnitCost" type="number" min="0" step="0.01" placeholder="Q0.00"/>
+          </div>
+          <div>
+            <label>Fecha (opcional)</label>
+            <input id="buyDate" type="date"/>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="buyBtn" class="big-button">Registrar compra</button>
+          <button id="clearPurchasesBtn" class="ghost">Limpiar registro</button>
+        </div>
+
+        <div class="small-note" style="margin-top:10px;">Últimas compras registradas</div>
+        <ul id="purchasesList" class="list"></ul>
+      </div>
+
 
       <hr/>
       <h3>Productos disponibles</h3>
@@ -328,6 +376,12 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
             <button id="exportDailyBtn" class="ghost">Descargar ventas del día (PDF)</button>
+
+            <button id="pickBackupDirBtn" class="ghost">Seleccionar carpeta backup</button>
+            <button id="manualBackupBtn" class="ghost">Backup manual</button>
+            <button id="restoreBackupBtn" class="ghost">Restaurar backup</button>
+            <input id="restoreFile" type="file" accept="application/json,.json" style="display:none;"/>
+
             <button id="deleteSales" class="danger">Borrar ventas</button>
           </div>
         </div>
@@ -413,6 +467,7 @@ function closeMenu(){
   drawer.classList.remove('open');
   backdrop.classList.remove('open');
   drawer.setAttribute('aria-hidden','true');
+  try{ btnOpenMenu && btnOpenMenu.focus(); }catch(e){}
 }
 btnOpenMenu.onclick = openMenu;
 btnCloseMenu.onclick = closeMenu;
@@ -433,7 +488,14 @@ function switchView(key){
 }
 navBtns.forEach(btn=>{
   btn.addEventListener('click', ()=>{
-    switchView(btn.dataset.view);
+    const target = btn.dataset.view;
+    if(target === 'inventario' && !inventoryUnlocked){
+      const ok = requireInventoryAccess('entrar al inventario');
+      if(!ok){ alert('Código incorrecto'); return; }
+      inventoryUnlocked = true;
+      try{ updateAdminToggle(); }catch(e){}
+    }
+    switchView(target);
     closeMenu();
   });
 });
@@ -446,11 +508,14 @@ const { jsPDF } = window.jspdf;
 const KEY_PRODUCTS = 'mb_products_pdf';
 const KEY_SALES = 'mb_sales_pdf';
 const KEY_TICKET = 'mb_ticket_counter_pdf';
+const KEY_PURCHASES = 'mb_purchases_pdf';
+const INVENTORY_ACCESS_CODE = '12345';
 
 let products = JSON.parse(localStorage.getItem(KEY_PRODUCTS)||'[]');
 let sales = JSON.parse(localStorage.getItem(KEY_SALES)||'[]');
 let ticketCounter = parseInt(localStorage.getItem(KEY_TICKET)||'1',10);
 let cart = [];
+let purchases = JSON.parse(localStorage.getItem(KEY_PURCHASES)||'[]');
 
 /* ==== MIGRACIÓN: asegurar campos cost/price/stock ==== */
 products = (products || []).map(p => ({
@@ -468,6 +533,8 @@ const cancelEditBtn = document.getElementById('cancelEditBtn');
 const clearProductsBtn = document.getElementById('clearProductsBtn');
 const exportProductsBtn = document.getElementById('exportProductsBtn');
 
+
+const invInvestmentEl = document.getElementById('invInvestment');
 const p_name = document.getElementById('p_name');
 const p_cost = document.getElementById('p_cost');
 const p_price = document.getElementById('p_price');
@@ -476,6 +543,16 @@ const p_stock = document.getElementById('p_stock');
 const editHint = document.getElementById('editHint');
 const editNameLabel = document.getElementById('editNameLabel');
 
+
+
+/* COMPRAS (ENTRADAS A INVENTARIO) */
+const buyProductSelect = document.getElementById('buyProductSelect');
+const buyQty = document.getElementById('buyQty');
+const buyUnitCost = document.getElementById('buyUnitCost');
+const buyDate = document.getElementById('buyDate');
+const buyBtn = document.getElementById('buyBtn');
+const clearPurchasesBtn = document.getElementById('clearPurchasesBtn');
+const purchasesList = document.getElementById('purchasesList');
 /* BUSCAR PRODUCTO */
 const filterInput = document.getElementById('filterInput');
 const filterQty = document.getElementById('filterQty');
@@ -488,6 +565,8 @@ const cartTableBody = document.querySelector('#cartTable tbody');
 const cartTotalEl = document.getElementById('cartTotal');
 const payBtn = document.getElementById('payBtn');
 const clearCartBtn = document.getElementById('clearCartBtn');
+
+const adminToggleBtn = document.getElementById('adminToggleBtn');
 const clientNameEl = document.getElementById('clientName');
 const payMethodEl = document.getElementById('payMethod');
 
@@ -511,6 +590,8 @@ const closeResultEl = document.getElementById('closeResult');
 function saveProducts(){ localStorage.setItem(KEY_PRODUCTS, JSON.stringify(products)); }
 function saveSales(){ localStorage.setItem(KEY_SALES, JSON.stringify(sales)); }
 function saveTicketCounter(){ localStorage.setItem(KEY_TICKET, ticketCounter.toString()); }
+function savePurchases(){ localStorage.setItem(KEY_PURCHASES, JSON.stringify(purchases)); }
+
 function formatQ(v){ return 'Q'+Number(v).toFixed(2); }
 
 function pad2(n){ return String(n).padStart(2,'0'); }
@@ -520,6 +601,212 @@ function dateKeyFromDate(d){
 }
 function todayKey(){ return dateKeyFromDate(new Date()); }
 function safeNumber(x){ const n = Number(x); return isFinite(n) ? n : 0; }
+
+
+/* ===== ACCESO A INVENTARIO (CÓDIGO 12345) ===== */
+/* ===== BACKUPS A CARPETA (File System Access API) =====
+   - Requiere código 12345
+   - Permite seleccionar una carpeta de backups y guardar automáticamente un JSON por cada venta
+   - Incluye backup manual y restauración desde archivo JSON
+*/
+let backupDirHandle = null;
+
+// IndexedDB simple para guardar el handle de carpeta (persistente)
+const HANDLE_DB = "mb_fs_handles_v1";
+const HANDLE_STORE = "handles";
+
+function openHandleDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(HANDLE_DB, 1);
+    req.onupgradeneeded = (e)=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(HANDLE_STORE)){
+        db.createObjectStore(HANDLE_STORE);
+      }
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbGetHandle(key){
+  const db = await openHandleDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(HANDLE_STORE, "readonly");
+    const st = tx.objectStore(HANDLE_STORE);
+    const r = st.get(key);
+    r.onsuccess = ()=> resolve(r.result || null);
+    r.onerror = ()=> reject(r.error);
+  });
+}
+async function idbSetHandle(key, val){
+  const db = await openHandleDB();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(HANDLE_STORE, "readwrite");
+    const st = tx.objectStore(HANDLE_STORE);
+    const r = st.put(val, key);
+    r.onsuccess = ()=> resolve(true);
+    r.onerror = ()=> reject(r.error);
+  });
+}
+
+async function verifyPermission(handle, readWrite){
+  if(!handle) return false;
+  const opts = readWrite ? {mode:"readwrite"} : {};
+  // @ts-ignore
+  if(handle.queryPermission){
+    // @ts-ignore
+    let perm = await handle.queryPermission(opts);
+    if(perm === "granted") return true;
+    // @ts-ignore
+    perm = await handle.requestPermission(opts);
+    return perm === "granted";
+  }
+  return false;
+}
+
+function getBackupPayload(){
+  return {
+    app: "Construcciones Globales",
+    version: 1,
+    ts: new Date().toISOString(),
+    products,
+    sales,
+    ticketCounter,
+    purchases: (typeof purchases !== "undefined" ? purchases : [])
+  };
+}
+
+async function writeBackupFile(payload, filename){
+  if(!backupDirHandle) throw new Error("No hay carpeta seleccionada");
+  const ok = await verifyPermission(backupDirHandle, true);
+  if(!ok) throw new Error("Permiso no concedido a la carpeta");
+  // @ts-ignore
+  const fileHandle = await backupDirHandle.getFileHandle(filename, {create:true});
+  // @ts-ignore
+  const writable = await fileHandle.createWritable();
+  await writable.write(JSON.stringify(payload, null, 2));
+  await writable.close();
+}
+
+function backupFilename(extra){
+  const d = new Date();
+  const pad = (n)=> String(n).padStart(2,'0');
+  const ts = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  return `backup_${ts}${extra?("_"+extra):""}.json`;
+}
+
+async function pickBackupDirectory(){
+  const ok = requireInventoryAccess('seleccionar carpeta de backup');
+  if(!ok){ alert('Código incorrecto'); return; }
+
+  if(!window.isSecureContext){
+    alert('Para seleccionar carpeta de backup debes abrir el sistema en un contexto seguro (https o localhost).\n\nSolución rápida: abre una terminal en la carpeta del sistema y ejecuta:  python -m http.server 8000  \nLuego entra a: http://localhost:8000');
+    return;
+  }
+  if(!window.showDirectoryPicker){
+    alert("Tu navegador no soporta selección de carpeta. Usa Chrome/Edge actualizado.");
+    return;
+  }
+  try{
+    // @ts-ignore
+    backupDirHandle = await window.showDirectoryPicker();
+    await idbSetHandle("backupDir", backupDirHandle);
+    const perm = await verifyPermission(backupDirHandle, true);
+    alert(perm ? "Carpeta de backup configurada y con permiso." : "Carpeta guardada, pero sin permiso. Intenta de nuevo.");
+  }catch(e){
+    console.warn(e);
+    alert("No se seleccionó carpeta.");
+  }
+}
+
+async function manualBackup(){
+  const ok = requireInventoryAccess('realizar backup manual');
+  if(!ok){ alert('Código incorrecto'); return; }
+
+  const payload = getBackupPayload();
+  const name = backupFilename("manual");
+  try{
+    if(backupDirHandle){
+      await writeBackupFile(payload, name);
+      alert("Backup guardado en carpeta: " + name);
+      return;
+    }
+  }catch(e){
+    console.warn(e);
+  }
+
+  // Fallback: descarga archivo
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  try{ a.click(); }catch(e){ console.warn(e); }
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); try{ a.remove(); }catch(e){} }, 1000);
+  alert("No hay carpeta configurada (o no es posible en file://). Se descargó el backup como archivo.");
+}
+
+async function autoBackupOnSale(ticketNo){
+  const payload = getBackupPayload();
+  const name = backupFilename("ticket"+ticketNo);
+  if(!backupDirHandle) return; // silencioso si no configuró carpeta
+  try{
+    await writeBackupFile(payload, name);
+  }catch(e){
+    console.warn("Auto-backup falló:", e);
+  }
+}
+
+function triggerRestorePick(){
+  const ok = requireInventoryAccess('restaurar backup');
+  if(!ok){ alert('Código incorrecto'); return; }
+  if(restoreFile) restoreFile.click();
+}
+
+async function restoreFromFile(file){
+  const ok = requireInventoryAccess('restaurar backup');
+  if(!ok){ alert('Código incorrecto'); return; }
+
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+
+    if(!data || !Array.isArray(data.products) || !Array.isArray(data.sales)){
+      alert("Backup inválido.");
+      return;
+    }
+
+    products = data.products;
+    sales = data.sales;
+    ticketCounter = parseInt(data.ticketCounter || "1", 10) || 1;
+    if(typeof data.purchases !== "undefined") purchases = data.purchases;
+
+    saveProducts();
+    saveSales();
+    saveTicketCounter();
+    try{ savePurchases(); }catch(e){}
+
+    // refrescar UI
+    renderProducts();
+    renderCart();
+    renderSales();
+    renderCloseResult();
+    try{ renderPurchases(); }catch(e){}
+
+    alert("Backup restaurado correctamente.");
+  }catch(e){
+    console.warn(e);
+    alert("No se pudo restaurar el backup.");
+  }finally{
+    if(restoreFile) restoreFile.value = "";
+  }
+}
+
+let inventoryUnlocked = false;
+function requireInventoryAccess(reason){
+  const code = prompt(`Ingrese código para ${reason}:`);
+  return code === INVENTORY_ACCESS_CODE;
+}
 
 /* ===== EDICIÓN EN FORMULARIO ===== */
 let editingIndex = null;
@@ -535,6 +822,34 @@ function resetProductForm(){
   cancelEditBtn.style.display = 'none';
   editHint.style.display = 'none';
   editNameLabel.textContent = '';
+}
+
+function updateAdminToggle(){
+  if(!adminToggleBtn) return;
+  if(inventoryUnlocked){
+    adminToggleBtn.textContent = "MODO ADMIN ON";
+  }else{
+    adminToggleBtn.textContent = "MODO ADMIN OFF";
+  }
+}
+
+// Botón para activar/desactivar modo admin (inventario)
+if(adminToggleBtn){
+  adminToggleBtn.addEventListener("click", ()=>{
+    if(inventoryUnlocked){
+      // apagar
+      inventoryUnlocked = false;
+      updateAdminToggle();
+      alert("Modo admin OFF. Para entrar a inventario debes ingresar el código nuevamente.");
+      return;
+    }
+    // encender: pedir código
+    const ok = requireInventoryAccess("activar modo admin");
+    if(!ok){ alert("Código incorrecto"); return; }
+    inventoryUnlocked = true;
+    updateAdminToggle();
+    alert("Modo admin ON. Ya puedes entrar al inventario sin volver a ingresar código (hasta que lo apagues).");
+  });
 }
 
 cancelEditBtn.onclick = () => {
@@ -580,7 +895,27 @@ function renderProducts(){
     o.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
     productSelect.appendChild(o);
   });
+
+  // Opciones para registrar compras (incrementar stock)
+  if(buyProductSelect){
+    buyProductSelect.innerHTML = '<option value="">-- Seleccionar producto --</option>';
+    products.forEach((p, idx)=>{
+      const o2 = document.createElement('option');
+      o2.value = idx;
+      o2.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
+      buyProductSelect.appendChild(o2);
+    });
+  }
+  // Resumen: inversión total (costo x stock)
+  try{
+    if(invInvestmentEl){
+      const inv = (products || []).reduce((acc,p)=> acc + (safeNumber(p.cost) * (parseInt(p.stock,10)||0)), 0);
+      invInvestmentEl.textContent = formatQ(inv);
+    }
+  }catch(e){}
+
 }
+
 
 addProductBtn.onclick = ()=>{
   const name = p_name.value.trim();
@@ -747,6 +1082,90 @@ window.removeFromCart = removeFromCart;
 
 clearCartBtn.onclick = ()=>{ if(confirm('Limpiar carrito?')){ cart=[]; renderCart(); } };
 
+/* ===== COMPRAS (ENTRADAS A INVENTARIO) ===== */
+function renderPurchases(){
+  if(!purchasesList) return;
+  purchasesList.innerHTML = '';
+  if(!Array.isArray(purchases)) purchases = [];
+  if(purchases.length === 0){
+    purchasesList.innerHTML = '<li class="center small-note">No hay compras registradas</li>';
+    return;
+  }
+  purchases.slice(0, 25).forEach(p=>{
+    const li = document.createElement('li');
+    const d = p.date ? new Date(p.date).toLocaleDateString() : '';
+    const unit = (p.unitCost !== null && p.unitCost !== undefined && p.unitCost !== '') ? ` | Costo: ${formatQ(p.unitCost)}` : '';
+    li.innerHTML = `
+      <div>
+        <strong>${p.product}</strong> <span class="pill">+${p.qty}</span>
+        <div class="small-note">${d}${unit}</div>
+      </div>
+      <div class="small-note">${new Date(p.ts||Date.now()).toLocaleTimeString()}</div>
+    `;
+    purchasesList.appendChild(li);
+  });
+}
+
+if(buyDate){
+  try{ buyDate.value = todayKey(); }catch(e){}
+}
+
+if(buyBtn){
+  buyBtn.onclick = ()=>{
+    // el panel de compras también pide código 12345
+    const ok = requireInventoryAccess('registrar compra');
+    if(!ok){ alert('Código incorrecto'); return; }
+
+    const idx = parseInt(buyProductSelect && buyProductSelect.value, 10);
+    const qty = parseInt(buyQty && buyQty.value, 10);
+
+    if(!Number.isFinite(idx) || idx < 0 || idx >= products.length){
+      alert('Seleccione un producto válido');
+      return;
+    }
+    if(!Number.isFinite(qty) || qty <= 0){
+      alert('Cantidad inválida');
+      return;
+    }
+
+    products[idx].stock = (parseInt(products[idx].stock,10) || 0) + qty;
+    saveProducts();
+    renderProducts();
+
+    // registrar en bitácora local (no afecta ventas)
+    const unitCost = (buyUnitCost && buyUnitCost.value !== '') ? safeNumber(buyUnitCost.value) : '';
+    const dateStr = (buyDate && buyDate.value) ? buyDate.value : todayKey();
+
+    purchases = Array.isArray(purchases) ? purchases : [];
+    purchases.unshift({
+      ts: new Date().toISOString(),
+      date: dateStr,
+      product: products[idx].name,
+      qty: qty,
+      unitCost: unitCost
+    });
+    savePurchases();
+    renderPurchases();
+
+    if(buyQty) buyQty.value = '1';
+    if(buyUnitCost) buyUnitCost.value = '';
+    alert(`Compra registrada. Stock actualizado: ${products[idx].name} = ${products[idx].stock}`);
+  };
+}
+
+if(clearPurchasesBtn){
+  clearPurchasesBtn.onclick = ()=>{
+    const ok = requireInventoryAccess('limpiar registro de compras');
+    if(!ok){ alert('Código incorrecto'); return; }
+    if(confirm('¿Borrar el registro de compras?')){
+      purchases = [];
+      savePurchases();
+      renderPurchases();
+    }
+  };
+}
+
+
 /* ===== REGISTRO DIARIO ===== */
 function salesOfDay(dayKey){
   return sales.filter(s => (s.dayKey || dateKeyFromDate(s.date)) === dayKey);
@@ -788,12 +1207,16 @@ function renderSales(){
       const method = (s.method || 'EFECTIVO').toUpperCase();
       const clientTxt = s.client ? s.client : 'Cliente';
       li.innerHTML = `
-        <div>
+        <div style="flex:1;">
           Ticket ${s.ticket} - ${clientTxt} - ${formatQ(s.total)}
           <div class="small-note">
             <span class="pill">${method}</span>
             <span class="small-note">${new Date(s.date).toLocaleString()}</span>
           </div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">
+          <button class="ghost" onclick="reprintTicket(${s.ticket})">Reimprimir</button>
+          <button class="danger" onclick="deleteSaleTicket(${s.ticket})">Eliminar</button>
         </div>
       `;
       salesList.appendChild(li);
@@ -823,6 +1246,66 @@ deleteSalesBtn.onclick = ()=>{
   } else { alert("Código incorrecto"); }
 };
 
+
+/* Borrar venta por ticket (requiere 12345) + devuelve stock al inventario */
+function deleteSaleTicket(ticketNo){
+  const ok = requireInventoryAccess('borrar esta venta');
+  if(!ok){ alert('Código incorrecto'); return; }
+
+  const idxSale = sales.findIndex(s=> Number(s.ticket) === Number(ticketNo));
+  if(idxSale === -1){
+    alert('No se encontró el ticket.');
+    return;
+  }
+  if(!confirm(`¿Eliminar el Ticket #${ticketNo}? Esto devolverá stock al inventario.`)) return;
+
+  const sale = sales[idxSale];
+
+  // devolver stock
+  try{
+    (sale.items || []).forEach(it=>{
+      const qty = parseInt(it.qty,10) || 0;
+      if(qty <= 0) return;
+
+      if(Number.isFinite(it.idx) && products[it.idx]){
+        products[it.idx].stock = (parseInt(products[it.idx].stock,10)||0) + qty;
+      }else{
+        const pIdx = products.findIndex(p=> (p.name||'').toLowerCase() === (it.name||'').toLowerCase());
+        if(pIdx !== -1){
+          products[pIdx].stock = (parseInt(products[pIdx].stock,10)||0) + qty;
+        }
+      }
+    });
+  }catch(e){}
+
+  // eliminar venta
+  sales.splice(idxSale,1);
+
+  saveProducts();
+  saveSales();
+
+  try{ renderProducts(); }catch(e){}
+  try{ renderSales(); }catch(e){}
+  try{ renderCloseResult(); }catch(e){}
+  alert(`Ticket #${ticketNo} eliminado y stock devuelto.`);
+}
+window.deleteSaleTicket = deleteSaleTicket;
+
+
+
+
+
+/* Reimprimir ticket de venta */
+function reprintTicket(ticketNo){
+  const sale = sales.find(s=> Number(s.ticket) === Number(ticketNo));
+  if(!sale){ alert('No se encontró el ticket.'); return; }
+  const items = sale.items || [];
+  const total = safeNumber(sale.total);
+  const client = sale.client || '';
+  const method = (sale.method || 'EFECTIVO').toUpperCase();
+  generateTicketPDF(items, total, client, sale.ticket, method);
+}
+window.reprintTicket = reprintTicket;
 /* Export inventario PDF */
 exportProductsBtn.onclick = ()=>{
   const doc = new jsPDF();
@@ -862,6 +1345,29 @@ exportDailyBtn.onclick = ()=>{
   });
 
   doc.save(`ventas_${dayKey}.pdf`);
+
+
+/* ===== BACKUP (BOTONES) ===== */
+(async function initBackupHandle(){
+  try{
+    if(!window.isSecureContext) return;
+    backupDirHandle = await idbGetHandle("backupDir");
+    if(backupDirHandle){
+      await verifyPermission(backupDirHandle, true);
+    }
+  }catch(e){ console.warn(e); }
+})();
+
+if(pickBackupDirBtn) pickBackupDirBtn.onclick = pickBackupDirectory;
+if(manualBackupBtn) manualBackupBtn.onclick = manualBackup;
+if(restoreBackupBtn) restoreBackupBtn.onclick = triggerRestorePick;
+if(restoreFile){
+  restoreFile.addEventListener("change", (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(f) restoreFromFile(f);
+  });
+}
+
 };
 
 /* ===== COBRO + TICKET (Carta) ===== */
@@ -910,6 +1416,9 @@ payBtn.onclick = ()=>{
   ticketCounter++;
   saveTicketCounter();
 
+  // Auto-backup por venta (si hay carpeta configurada)
+  try{ autoBackupOnSale(currentTicket); }catch(e){}
+
   cart=[];
   renderCart();
   renderSales();
@@ -931,11 +1440,16 @@ function generateTicketPDF(items,total,client,ticketNo,method){
   img.src = 'LOGO1.png';
 
   img.onload = function(){
-    const imgW = 60;
-    const imgH = imgW * (img.height / img.width);
-    doc.addImage(img,'PNG',centerX - imgW/2,y,imgW,imgH);
-    y += imgH + 12;
-    drawHeader();
+    try{
+      const imgW = 60;
+      const imgH = imgW * (img.height / img.width);
+      doc.addImage(img,'PNG',centerX - imgW/2,y,imgW,imgH);
+      y += imgH + 12;
+      drawHeader();
+    }catch(e){
+      console.warn('No se pudo insertar LOGO1.png en el PDF (CORS/file://). Se generará sin logo.', e);
+      drawHeader();
+    }
   };
 
   img.onerror = function(){
@@ -1084,12 +1598,17 @@ function generateCloseTicketPDF(r){
   const img = new Image();
   img.src = 'LOGO1.png';
   img.onload = function(){
-    const imgW=38;
-    const xCenter=80/2;
-    const imgH = imgW*(img.height/img.width);
-    doc.addImage(img,'PNG',xCenter-imgW/2,y,imgW,imgH);
-    y+=imgH+4;
-    draw();
+    try{
+      const imgW=38;
+      const xCenter=80/2;
+      const imgH = imgW*(img.height/img.width);
+      doc.addImage(img,'PNG',xCenter-imgW/2,y,imgW,imgH);
+      y+=imgH+4;
+      draw();
+    }catch(e){
+      console.warn('No se pudo insertar LOGO1.png en el PDF (CORS/file://). Se generará sin logo.', e);
+      draw();
+    }
   };
   img.onerror=function(){ draw(); };
 
@@ -1164,6 +1683,7 @@ renderCart();
 renderSales();
 renderCloseResult();
 resetProductForm();
+renderPurchases();
 </script>
 
 </body>
