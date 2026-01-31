@@ -514,23 +514,8 @@
   btnWhats.href = `https://wa.me/${WHATSAPP_NUMBER}?text=${msg}`;
 
   // =========================
-  // Copy helpers
+  // Toast
   // =========================
-  async function copyText(text){
-    try{
-      await navigator.clipboard.writeText(text);
-      toast("Copiado ✅");
-    }catch(e){
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      try{ document.execCommand("copy"); toast("Copiado ✅"); }
-      catch(err){ toast("No se pudo copiar"); }
-      ta.remove();
-    }
-  }
-
   function toast(t){
     const el = document.createElement("div");
     el.textContent = t;
@@ -551,6 +536,24 @@
     setTimeout(()=>{ try{ el.remove(); }catch(e){} }, 1300);
   }
 
+  // =========================
+  // Copy helpers
+  // =========================
+  async function copyText(text){
+    try{
+      await navigator.clipboard.writeText(text);
+      toast("Copiado ✅");
+    }catch(e){
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try{ document.execCommand("copy"); toast("Copiado ✅"); }
+      catch(err){ toast("No se pudo copiar"); }
+      ta.remove();
+    }
+  }
+
   document.getElementById("btnCopyGYT").addEventListener("click", ()=>{
     copyText(document.getElementById("accGYT").textContent.trim());
   });
@@ -559,7 +562,7 @@
   });
 
   // =========================
-  // AUDIO
+  // AUDIO (FIX GitHub Pages)
   // =========================
   const audio = document.getElementById("alertSound");
   const btnMute = document.getElementById("btnMute");
@@ -567,6 +570,8 @@
   const btnEnableAudio = document.getElementById("btnEnableAudio");
 
   let isMuted = false;
+  let audioAvailable = true;   // si el mp3 existe
+  let audioReady = false;      // si ya cargó algo
 
   function setMute(m){
     isMuted = !!m;
@@ -574,16 +579,52 @@
     btnMute.textContent = isMuted ? "🔊 Activar sonido" : "🔇 Silenciar";
   }
 
+  // Detectar si el MP3 no existe / error de carga
+  audio.addEventListener("error", ()=>{
+    audioAvailable = false;
+    audioReady = false;
+    toast("⚠️ No se encontró DIFICULTADES.mp3 (revisa nombre y carpeta)");
+  });
+
+  // Marcar como listo cuando ya cargó suficiente
+  audio.addEventListener("canplaythrough", ()=>{
+    audioReady = true;
+  });
+
+  // Warmup: intenta reproducir en silencio y pausar (mejora mucho en Chrome)
+  async function warmupAudio(){
+    if(!audioAvailable) return;
+    try{
+      audio.muted = true;
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+    }catch(e){
+      // ignorar
+    }finally{
+      audio.muted = isMuted;
+    }
+  }
+
+  async function tryPlayWithSound(){
+    if(!audioAvailable){
+      toast("Audio no disponible (faltó el MP3)");
+      return;
+    }
+    audio.muted = false;
+    await audio.play();
+    setMute(false);
+  }
+
   btnMute.addEventListener("click", async ()=>{
     if(isMuted){
       setMute(false);
       try{
-        audio.muted = false;
-        await audio.play();
+        await tryPlayWithSound();
         toast("Sonido activado");
       }catch(e){
         gate.style.display = "flex";
-        toast("Toca para activar sonido");
+        toast("Toca ENTRAR para activar sonido");
       }
     }else{
       setMute(true);
@@ -591,30 +632,33 @@
     }
   });
 
-  async function tryPlayWithSound(){
-    audio.muted = false;
-    await audio.play();
-    setMute(false);
-  }
-
+  // ✅ Entrar: NO se queda “bloqueado” si el audio falla
   btnEnableAudio.addEventListener("click", async ()=>{
+    // Si el mp3 no existe, dejamos entrar igual
+    if(!audioAvailable){
+      toast("⚠️ Falta DIFICULTADES.mp3 (pero puedes entrar igual)");
+      gate.style.display = "none";
+      return;
+    }
+
+    // warmup antes de play real
+    await warmupAudio();
+
     try{
       await tryPlayWithSound();
       gate.style.display = "none";
       toast("Sonido activado ✅");
     }catch(e){
-      toast("No se pudo activar (Contacte a soporte)");
+      // Si falla, igual entrar sin error de “soporte”
+      gate.style.display = "none";
+      if(!audioReady) toast("⚠️ Audio aún cargando... (entrando igual)");
+      else toast("⚠️ Audio bloqueado por navegador (entrando igual)");
     }
   });
 
   function unlockOnFirstUserGesture(){
     const once = async ()=>{
-      if(gate.style.display !== "none"){
-        try{
-          await tryPlayWithSound();
-          gate.style.display = "none";
-        }catch(e){}
-      }
+      await warmupAudio();
       window.removeEventListener("pointerdown", once);
       window.removeEventListener("keydown", once);
       window.removeEventListener("touchstart", once);
@@ -624,36 +668,23 @@
     window.addEventListener("keydown", once);
   }
 
-  // ✅ NUEVO: precargar audio durante los 9s + entrar solo
+  // Auto entrar en 9s (si autoplay falla, vuelve a mostrar gate)
   function gateAutoEnterAfter9s(){
-    // precarga agresiva para que al entrar suene más rápido
-    try{
-      audio.load(); // fuerza al navegador a preparar el recurso
-    }catch(e){}
-
+    try{ audio.load(); }catch(e){}
     setTimeout(async ()=>{
       gate.style.display = "none";
       try{
         await tryPlayWithSound();
       }catch(e){
-        // si bloquea autoplay con sonido, mostramos el gate para 1 click
         gate.style.display = "flex";
       }
     }, 9000);
   }
 
-  // Arranque
   (function init(){
-    // mostrar gate al abrir
     gate.style.display = "flex";
-
-    // mantener comportamiento de mute
     setMute(false);
-
-    // permitir desbloqueo por interacción
     unlockOnFirstUserGesture();
-
-    // auto entrar en 9 segundos
     gateAutoEnterAfter9s();
   })();
 </script>
