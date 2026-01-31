@@ -340,7 +340,7 @@
     /* overlay para desbloquear audio si el navegador bloquea */
     .audioGate{
       position:fixed; inset:0;
-      display:none;
+      display:none; /* lo mostramos por JS al inicio */
       align-items:center;
       justify-content:center;
       background: rgba(0,0,0,.65);
@@ -370,7 +370,7 @@
 
     /* responsive: sin scroll y en una columna */
     @media (max-width: 920px){
-      body{ overflow:auto; } /* en móvil puede necesitar 1-2px, mejor permitir */
+      body{ overflow:auto; }
       .inner{ grid-template-columns: 1fr; }
       .banks{ grid-template-columns: 1fr; }
       .clientLogo img{ max-height:18vh; }
@@ -384,7 +384,7 @@
   <!-- Audio (mismo folder) -->
   <audio id="alertSound" src="DIFICULTADES.mp3" preload="auto" loop playsinline></audio>
 
-  <!-- Gate si el navegador bloquea autoplay con sonido -->
+  <!-- Gate (ventana inicial) -->
   <div class="audioGate" id="audioGate">
     <div class="panel">
       <h4>Pendiente de Pago</h4>
@@ -416,7 +416,6 @@
           </div>
 
           <div class="actions">
-            <!-- WhatsApp: cambia el texto si quieres -->
             <a class="btn btnPrimary" id="btnWhats" target="_blank" rel="noopener">
               ✅ Reportar pago
             </a>
@@ -502,7 +501,7 @@
   // =========================
   // CONFIG
   // =========================
-  const WHATSAPP_NUMBER = "41529411"; // +502 5814-0621
+  const WHATSAPP_NUMBER = "41529411";
   const CLIENT_NAME = "Construcciones Globales";
 
   // =========================
@@ -522,7 +521,6 @@
       await navigator.clipboard.writeText(text);
       toast("Copiado ✅");
     }catch(e){
-      // fallback
       const ta = document.createElement("textarea");
       ta.value = text;
       document.body.appendChild(ta);
@@ -578,13 +576,12 @@
 
   btnMute.addEventListener("click", async ()=>{
     if(isMuted){
-      // intentar activar sonido
       setMute(false);
       try{
+        audio.muted = false;
         await audio.play();
         toast("Sonido activado");
       }catch(e){
-        // si bloquea, mostrar gate
         gate.style.display = "flex";
         toast("Toca para activar sonido");
       }
@@ -594,37 +591,15 @@
     }
   });
 
-  // Intento “más agresivo” de autoplay:
-  // 1) Intentar play al cargar
-  // 2) Si bloquea, mostrar panel para 1 toque
-  async function tryAutoPlay(){
-    try{
-      // intentamos directo con sonido (a veces funciona si ya permitieron autoplay)
-      audio.muted = false;
-      await audio.play();
-      setMute(false);
-      return;
-    }catch(e1){
-      // si falla, intentamos arrancar en mute (suele permitir autoplay)
-      try{
-        audio.muted = true;
-        await audio.play();
-        // ya está reproduciendo (en silencio). Mostramos aviso para activar sonido.
-        setMute(true);
-        gate.style.display = "flex";
-      }catch(e2){
-        // ni siquiera en mute pudo
-        setMute(true);
-        gate.style.display = "flex";
-      }
-    }
+  async function tryPlayWithSound(){
+    audio.muted = false;
+    await audio.play();
+    setMute(false);
   }
 
   btnEnableAudio.addEventListener("click", async ()=>{
     try{
-      audio.muted = false;
-      await audio.play();
-      setMute(false);
+      await tryPlayWithSound();
       gate.style.display = "none";
       toast("Sonido activado ✅");
     }catch(e){
@@ -632,14 +607,11 @@
     }
   });
 
-  // También desbloqueamos al primer click/touch en cualquier parte
   function unlockOnFirstUserGesture(){
     const once = async ()=>{
       if(gate.style.display !== "none"){
         try{
-          audio.muted = false;
-          await audio.play();
-          setMute(false);
+          await tryPlayWithSound();
           gate.style.display = "none";
         }catch(e){}
       }
@@ -652,14 +624,38 @@
     window.addEventListener("keydown", once);
   }
 
+  // ✅ NUEVO: precargar audio durante los 9s + entrar solo
+  function gateAutoEnterAfter9s(){
+    // precarga agresiva para que al entrar suene más rápido
+    try{
+      audio.load(); // fuerza al navegador a preparar el recurso
+    }catch(e){}
+
+    setTimeout(async ()=>{
+      gate.style.display = "none";
+      try{
+        await tryPlayWithSound();
+      }catch(e){
+        // si bloquea autoplay con sonido, mostramos el gate para 1 click
+        gate.style.display = "flex";
+      }
+    }, 9000);
+  }
+
   // Arranque
   (function init(){
-    gate.style.display = "none";
-    setMute(false);
-    tryAutoPlay();
-    unlockOnFirstUserGesture();
-  })();
+    // mostrar gate al abrir
+    gate.style.display = "flex";
 
+    // mantener comportamiento de mute
+    setMute(false);
+
+    // permitir desbloqueo por interacción
+    unlockOnFirstUserGesture();
+
+    // auto entrar en 9 segundos
+    gateAutoEnterAfter9s();
+  })();
 </script>
 </body>
 </html>
