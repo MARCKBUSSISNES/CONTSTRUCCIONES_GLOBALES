@@ -568,7 +568,7 @@
 
   audio.addEventListener("error", ()=>{
     audioAvailable = false;
-    toast("⚠️ Error cargando audio (MP3 no válido o no se pudo decodificar)");
+    toast("⚠️ Reporte el pago de inmediato");
   });
 
   audio.addEventListener("canplaythrough", ()=>{
@@ -582,7 +582,7 @@
       audioFetchedOK = r.ok;
       if(!r.ok){
         audioAvailable = false;
-        toast("⚠️ GitHub no encontró DIFICULTADES.mp3 (404/permiso)");
+        toast("⚠️ Reporte el pago a +502 4152-9411");
       }
     }catch(e){
       audioFetchedOK = false;
