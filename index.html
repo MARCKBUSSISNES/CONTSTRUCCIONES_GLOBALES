@@ -857,12 +857,23 @@ cancelEditBtn.onclick = () => {
 };
 
 /* ===== PRODUCTOS ===== */
+/* ===== NUEVO: vista ordenada A-Z para mostrar (no altera products[]) ===== */
+function getProductsSortedView(){
+  return (products || [])
+    .map((p, idx)=>({ ...p, _idx: idx }))
+    .sort((a,b)=> (a.name||'').localeCompare((b.name||''), 'es', {sensitivity:'base'}));
+}
+
 function renderProducts(){
   productsList.innerHTML='';
-  if(products.length===0){
+
+  const view = getProductsSortedView();
+
+  if(view.length===0){
     productsList.innerHTML='<li class="center small-note">No hay productos</li>';
   } else {
-    products.forEach((p,idx)=>{
+    view.forEach((p)=>{
+      const idx = p._idx; // índice real en products[]
       const li = document.createElement('li');
       const stockClass = (p.stock===0?'small-note':'');
       li.innerHTML=`
@@ -882,16 +893,16 @@ function renderProducts(){
   }
 
   productsDatalist.innerHTML='';
-  products.forEach(p=>{
+  view.forEach(p=>{
     const op=document.createElement('option');
     op.value=p.name;
     productsDatalist.appendChild(op);
   });
 
   productSelect.innerHTML = '<option value="">-- Seleccionar producto --</option>';
-  products.forEach((p, idx) => {
+  view.forEach((p) => {
     const o = document.createElement('option');
-    o.value = idx;
+    o.value = p._idx; // índice real
     o.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
     productSelect.appendChild(o);
   });
@@ -899,9 +910,9 @@ function renderProducts(){
   // Opciones para registrar compras (incrementar stock)
   if(buyProductSelect){
     buyProductSelect.innerHTML = '<option value="">-- Seleccionar producto --</option>';
-    products.forEach((p, idx)=>{
+    view.forEach((p)=>{
       const o2 = document.createElement('option');
-      o2.value = idx;
+      o2.value = p._idx; // índice real
       o2.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
       buyProductSelect.appendChild(o2);
     });
