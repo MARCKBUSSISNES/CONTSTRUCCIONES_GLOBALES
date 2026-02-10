@@ -357,7 +357,20 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
 
 
       <hr/>
-      <h3>Productos disponibles</h3>
+
+      <!-- ✅ NUEVO: Selector de orden A-Z / Z-A -->
+      <div class="flex-row" style="justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap;">
+        <h3 style="margin:0;">Productos disponibles</h3>
+
+        <div class="flex-row" style="gap:8px;align-items:center;">
+          <label style="margin:0;">Orden</label>
+          <select id="sortOrder" style="width:160px;margin:0;">
+            <option value="AZ">A - Z</option>
+            <option value="ZA">Z - A</option>
+          </select>
+        </div>
+      </div>
+
       <ul id="productsList" class="list"></ul>
     </div>
   </section>
@@ -511,6 +524,18 @@ const KEY_TICKET = 'mb_ticket_counter_pdf';
 const KEY_PURCHASES = 'mb_purchases_pdf';
 const INVENTORY_ACCESS_CODE = '12345';
 
+// ✅ NUEVO: preferencia de orden A-Z / Z-A
+const sortOrderEl = document.getElementById('sortOrder');
+let sortOrder = localStorage.getItem('mb_sort_order') || 'AZ';
+if(sortOrderEl){
+  sortOrderEl.value = sortOrder;
+  sortOrderEl.addEventListener('change', ()=>{
+    sortOrder = (sortOrderEl.value === 'ZA') ? 'ZA' : 'AZ';
+    localStorage.setItem('mb_sort_order', sortOrder);
+    renderProducts();
+  });
+}
+
 let products = JSON.parse(localStorage.getItem(KEY_PRODUCTS)||'[]');
 let sales = JSON.parse(localStorage.getItem(KEY_SALES)||'[]');
 let ticketCounter = parseInt(localStorage.getItem(KEY_TICKET)||'1',10);
@@ -533,7 +558,6 @@ const cancelEditBtn = document.getElementById('cancelEditBtn');
 const clearProductsBtn = document.getElementById('clearProductsBtn');
 const exportProductsBtn = document.getElementById('exportProductsBtn');
 
-
 const invInvestmentEl = document.getElementById('invInvestment');
 const p_name = document.getElementById('p_name');
 const p_cost = document.getElementById('p_cost');
@@ -543,9 +567,7 @@ const p_stock = document.getElementById('p_stock');
 const editHint = document.getElementById('editHint');
 const editNameLabel = document.getElementById('editNameLabel');
 
-
-
-/* COMPRAS (ENTRADAS A INVENTARIO) */
+/* COMPRAS */
 const buyProductSelect = document.getElementById('buyProductSelect');
 const buyQty = document.getElementById('buyQty');
 const buyUnitCost = document.getElementById('buyUnitCost');
@@ -553,6 +575,7 @@ const buyDate = document.getElementById('buyDate');
 const buyBtn = document.getElementById('buyBtn');
 const clearPurchasesBtn = document.getElementById('clearPurchasesBtn');
 const purchasesList = document.getElementById('purchasesList');
+
 /* BUSCAR PRODUCTO */
 const filterInput = document.getElementById('filterInput');
 const filterQty = document.getElementById('filterQty');
@@ -602,16 +625,8 @@ function dateKeyFromDate(d){
 function todayKey(){ return dateKeyFromDate(new Date()); }
 function safeNumber(x){ const n = Number(x); return isFinite(n) ? n : 0; }
 
-
-/* ===== ACCESO A INVENTARIO (CÓDIGO 12345) ===== */
-/* ===== BACKUPS A CARPETA (File System Access API) =====
-   - Requiere código 12345
-   - Permite seleccionar una carpeta de backups y guardar automáticamente un JSON por cada venta
-   - Incluye backup manual y restauración desde archivo JSON
-*/
+/* ===== BACKUPS A CARPETA ===== */
 let backupDirHandle = null;
-
-// IndexedDB simple para guardar el handle de carpeta (persistente)
 const HANDLE_DB = "mb_fs_handles_v1";
 const HANDLE_STORE = "handles";
 
@@ -652,12 +667,9 @@ async function idbSetHandle(key, val){
 async function verifyPermission(handle, readWrite){
   if(!handle) return false;
   const opts = readWrite ? {mode:"readwrite"} : {};
-  // @ts-ignore
   if(handle.queryPermission){
-    // @ts-ignore
     let perm = await handle.queryPermission(opts);
     if(perm === "granted") return true;
-    // @ts-ignore
     perm = await handle.requestPermission(opts);
     return perm === "granted";
   }
@@ -680,9 +692,7 @@ async function writeBackupFile(payload, filename){
   if(!backupDirHandle) throw new Error("No hay carpeta seleccionada");
   const ok = await verifyPermission(backupDirHandle, true);
   if(!ok) throw new Error("Permiso no concedido a la carpeta");
-  // @ts-ignore
   const fileHandle = await backupDirHandle.getFileHandle(filename, {create:true});
-  // @ts-ignore
   const writable = await fileHandle.createWritable();
   await writable.write(JSON.stringify(payload, null, 2));
   await writable.close();
@@ -708,7 +718,6 @@ async function pickBackupDirectory(){
     return;
   }
   try{
-    // @ts-ignore
     backupDirHandle = await window.showDirectoryPicker();
     await idbSetHandle("backupDir", backupDirHandle);
     const perm = await verifyPermission(backupDirHandle, true);
@@ -735,7 +744,6 @@ async function manualBackup(){
     console.warn(e);
   }
 
-  // Fallback: descarga archivo
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -749,7 +757,7 @@ async function manualBackup(){
 async function autoBackupOnSale(ticketNo){
   const payload = getBackupPayload();
   const name = backupFilename("ticket"+ticketNo);
-  if(!backupDirHandle) return; // silencioso si no configuró carpeta
+  if(!backupDirHandle) return;
   try{
     await writeBackupFile(payload, name);
   }catch(e){
@@ -760,6 +768,7 @@ async function autoBackupOnSale(ticketNo){
 function triggerRestorePick(){
   const ok = requireInventoryAccess('restaurar backup');
   if(!ok){ alert('Código incorrecto'); return; }
+  const restoreFile = document.getElementById('restoreFile');
   if(restoreFile) restoreFile.click();
 }
 
@@ -767,6 +776,7 @@ async function restoreFromFile(file){
   const ok = requireInventoryAccess('restaurar backup');
   if(!ok){ alert('Código incorrecto'); return; }
 
+  const restoreFile = document.getElementById('restoreFile');
   try{
     const text = await file.text();
     const data = JSON.parse(text);
@@ -786,7 +796,6 @@ async function restoreFromFile(file){
     saveTicketCounter();
     try{ savePurchases(); }catch(e){}
 
-    // refrescar UI
     renderProducts();
     renderCart();
     renderSales();
@@ -826,24 +835,17 @@ function resetProductForm(){
 
 function updateAdminToggle(){
   if(!adminToggleBtn) return;
-  if(inventoryUnlocked){
-    adminToggleBtn.textContent = "MODO ADMIN ON";
-  }else{
-    adminToggleBtn.textContent = "MODO ADMIN OFF";
-  }
+  adminToggleBtn.textContent = inventoryUnlocked ? "MODO ADMIN ON" : "MODO ADMIN OFF";
 }
 
-// Botón para activar/desactivar modo admin (inventario)
 if(adminToggleBtn){
   adminToggleBtn.addEventListener("click", ()=>{
     if(inventoryUnlocked){
-      // apagar
       inventoryUnlocked = false;
       updateAdminToggle();
       alert("Modo admin OFF. Para entrar a inventario debes ingresar el código nuevamente.");
       return;
     }
-    // encender: pedir código
     const ok = requireInventoryAccess("activar modo admin");
     if(!ok){ alert("Código incorrecto"); return; }
     inventoryUnlocked = true;
@@ -852,16 +854,20 @@ if(adminToggleBtn){
   });
 }
 
-cancelEditBtn.onclick = () => {
-  resetProductForm();
-};
+cancelEditBtn.onclick = () => resetProductForm();
 
 /* ===== PRODUCTOS ===== */
-/* ===== NUEVO: vista ordenada A-Z para mostrar (no altera products[]) ===== */
+/* ✅ MODIFICADO: orden configurable A-Z / Z-A sin alterar products[] */
 function getProductsSortedView(){
+  const dir = (sortOrder === 'ZA') ? -1 : 1;
+
   return (products || [])
     .map((p, idx)=>({ ...p, _idx: idx }))
-    .sort((a,b)=> (a.name||'').localeCompare((b.name||''), 'es', {sensitivity:'base'}));
+    .sort((a,b)=>{
+      const an = (a.name||'').toString();
+      const bn = (b.name||'').toString();
+      return dir * an.localeCompare(bn, 'es', {sensitivity:'base'});
+    });
 }
 
 function renderProducts(){
@@ -873,7 +879,7 @@ function renderProducts(){
     productsList.innerHTML='<li class="center small-note">No hay productos</li>';
   } else {
     view.forEach((p)=>{
-      const idx = p._idx; // índice real en products[]
+      const idx = p._idx;
       const li = document.createElement('li');
       const stockClass = (p.stock===0?'small-note':'');
       li.innerHTML=`
@@ -902,31 +908,28 @@ function renderProducts(){
   productSelect.innerHTML = '<option value="">-- Seleccionar producto --</option>';
   view.forEach((p) => {
     const o = document.createElement('option');
-    o.value = p._idx; // índice real
+    o.value = p._idx;
     o.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
     productSelect.appendChild(o);
   });
 
-  // Opciones para registrar compras (incrementar stock)
   if(buyProductSelect){
     buyProductSelect.innerHTML = '<option value="">-- Seleccionar producto --</option>';
     view.forEach((p)=>{
       const o2 = document.createElement('option');
-      o2.value = p._idx; // índice real
-      o2.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
+      o2.value = p._idx;
+      o2.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '' );
       buyProductSelect.appendChild(o2);
     });
   }
-  // Resumen: inversión total (costo x stock)
+
   try{
     if(invInvestmentEl){
       const inv = (products || []).reduce((acc,p)=> acc + (safeNumber(p.cost) * (parseInt(p.stock,10)||0)), 0);
       invInvestmentEl.textContent = formatQ(inv);
     }
   }catch(e){}
-
 }
-
 
 addProductBtn.onclick = ()=>{
   const name = p_name.value.trim();
@@ -937,15 +940,11 @@ addProductBtn.onclick = ()=>{
   if(!name){ alert('Nombre requerido'); return; }
   if(cost < 0 || price < 0 || stock < 0){ alert('Datos inválidos'); return; }
 
-  // Si está en modo edición: pedir 3336 y guardar cambios
   if(editingIndex !== null){
     const code = prompt("Ingrese código para guardar cambios:");
     if(code !== '3336'){ alert("Código incorrecto"); return; }
 
-    products[editingIndex] = {
-      ...products[editingIndex],
-      name, cost, price, stock
-    };
+    products[editingIndex] = { ...products[editingIndex], name, cost, price, stock };
     saveProducts();
     renderProducts();
     resetProductForm();
@@ -953,7 +952,6 @@ addProductBtn.onclick = ()=>{
     return;
   }
 
-  // Modo normal: agregar
   products.push({name, cost, price, stock});
   saveProducts(); renderProducts();
   p_name.value=''; p_cost.value=''; p_price.value=''; p_stock.value='';
@@ -981,7 +979,6 @@ function deleteProduct(idx){
 }
 window.deleteProduct = deleteProduct;
 
-/* ===== EDITAR PRODUCTO (carga al formulario, pide 3336) ===== */
 function editProduct(idx){
   const code = prompt("Ingrese código para editar producto:");
   if(code !== '3336'){
@@ -990,8 +987,6 @@ function editProduct(idx){
   }
 
   const p = products[idx];
-
-  // Cambia a módulo inventario y carga datos
   switchView('inventario');
 
   editingIndex = idx;
@@ -1007,7 +1002,6 @@ function editProduct(idx){
 }
 window.editProduct = editProduct;
 
-/* ===== AGREGAR STOCK (pide 3336) ===== */
 function restockProduct(idx){
   const code = prompt("Ingrese código para agregar stock:");
   if(code !== '3336'){
@@ -1063,7 +1057,7 @@ function addToCart(idx, qty){
       idx,
       name: prod.name,
       price: prod.price,
-      cost: prod.cost,      // 👈 guardamos costo también para el registro
+      cost: prod.cost,
       qty
     });
   }
@@ -1093,7 +1087,7 @@ window.removeFromCart = removeFromCart;
 
 clearCartBtn.onclick = ()=>{ if(confirm('Limpiar carrito?')){ cart=[]; renderCart(); } };
 
-/* ===== COMPRAS (ENTRADAS A INVENTARIO) ===== */
+/* ===== COMPRAS ===== */
 function renderPurchases(){
   if(!purchasesList) return;
   purchasesList.innerHTML = '';
@@ -1116,14 +1110,10 @@ function renderPurchases(){
     purchasesList.appendChild(li);
   });
 }
-
-if(buyDate){
-  try{ buyDate.value = todayKey(); }catch(e){}
-}
+if(buyDate){ try{ buyDate.value = todayKey(); }catch(e){} }
 
 if(buyBtn){
   buyBtn.onclick = ()=>{
-    // el panel de compras también pide código 12345
     const ok = requireInventoryAccess('registrar compra');
     if(!ok){ alert('Código incorrecto'); return; }
 
@@ -1143,7 +1133,6 @@ if(buyBtn){
     saveProducts();
     renderProducts();
 
-    // registrar en bitácora local (no afecta ventas)
     const unitCost = (buyUnitCost && buyUnitCost.value !== '') ? safeNumber(buyUnitCost.value) : '';
     const dateStr = (buyDate && buyDate.value) ? buyDate.value : todayKey();
 
@@ -1176,7 +1165,6 @@ if(clearPurchasesBtn){
   };
 }
 
-
 /* ===== REGISTRO DIARIO ===== */
 function salesOfDay(dayKey){
   return sales.filter(s => (s.dayKey || dateKeyFromDate(s.date)) === dayKey);
@@ -1191,8 +1179,6 @@ function computeDayTotals(dayKey){
 
   daySales.forEach(s=>{
     total += safeNumber(s.total);
-
-    // costo vendido del ticket
     totalCost += safeNumber(s.totalCost);
 
     const m = (s.method || 'EFECTIVO').toUpperCase();
@@ -1201,7 +1187,6 @@ function computeDayTotals(dayKey){
   });
 
   const profit = total - totalCost;
-
   return { count: daySales.length, total, totalCost, profit, byMethod, daySales };
 }
 
@@ -1247,7 +1232,6 @@ salesDateEl.addEventListener('change', ()=>{
   renderCloseResult();
 });
 
-/* Borrar ventas */
 deleteSalesBtn.onclick = ()=>{
   const code = prompt("Ingrese código para borrar ventas:");
   if(code==='3336'){
@@ -1257,8 +1241,6 @@ deleteSalesBtn.onclick = ()=>{
   } else { alert("Código incorrecto"); }
 };
 
-
-/* Borrar venta por ticket (requiere 12345) + devuelve stock al inventario */
 function deleteSaleTicket(ticketNo){
   const ok = requireInventoryAccess('borrar esta venta');
   if(!ok){ alert('Código incorrecto'); return; }
@@ -1272,7 +1254,6 @@ function deleteSaleTicket(ticketNo){
 
   const sale = sales[idxSale];
 
-  // devolver stock
   try{
     (sale.items || []).forEach(it=>{
       const qty = parseInt(it.qty,10) || 0;
@@ -1289,7 +1270,6 @@ function deleteSaleTicket(ticketNo){
     });
   }catch(e){}
 
-  // eliminar venta
   sales.splice(idxSale,1);
 
   saveProducts();
@@ -1302,11 +1282,6 @@ function deleteSaleTicket(ticketNo){
 }
 window.deleteSaleTicket = deleteSaleTicket;
 
-
-
-
-
-/* Reimprimir ticket de venta */
 function reprintTicket(ticketNo){
   const sale = sales.find(s=> Number(s.ticket) === Number(ticketNo));
   if(!sale){ alert('No se encontró el ticket.'); return; }
@@ -1317,7 +1292,7 @@ function reprintTicket(ticketNo){
   generateTicketPDF(items, total, client, sale.ticket, method);
 }
 window.reprintTicket = reprintTicket;
-/* Export inventario PDF */
+
 exportProductsBtn.onclick = ()=>{
   const doc = new jsPDF();
   doc.setFontSize(14);
@@ -1327,7 +1302,6 @@ exportProductsBtn.onclick = ()=>{
   doc.save('inventario.pdf');
 };
 
-/* Export ventas del día PDF */
 exportDailyBtn.onclick = ()=>{
   const dayKey = salesDateEl.value || todayKey();
   const { daySales, total, byMethod, totalCost, profit } = computeDayTotals(dayKey);
@@ -1356,32 +1330,9 @@ exportDailyBtn.onclick = ()=>{
   });
 
   doc.save(`ventas_${dayKey}.pdf`);
-
-
-/* ===== BACKUP (BOTONES) ===== */
-(async function initBackupHandle(){
-  try{
-    if(!window.isSecureContext) return;
-    backupDirHandle = await idbGetHandle("backupDir");
-    if(backupDirHandle){
-      await verifyPermission(backupDirHandle, true);
-    }
-  }catch(e){ console.warn(e); }
-})();
-
-if(pickBackupDirBtn) pickBackupDirBtn.onclick = pickBackupDirectory;
-if(manualBackupBtn) manualBackupBtn.onclick = manualBackup;
-if(restoreBackupBtn) restoreBackupBtn.onclick = triggerRestorePick;
-if(restoreFile){
-  restoreFile.addEventListener("change", (e)=>{
-    const f = e.target.files && e.target.files[0];
-    if(f) restoreFromFile(f);
-  });
-}
-
 };
 
-/* ===== COBRO + TICKET (Carta) ===== */
+/* ===== COBRO + TICKET ===== */
 payBtn.onclick = ()=>{
   if(cart.length===0){alert('Carrito vacío'); return;}
 
@@ -1403,7 +1354,6 @@ payBtn.onclick = ()=>{
 
     totalVenta += item.qty * item.price;
 
-    // costo vendido: qty * costo
     const c = safeNumber(item.cost);
     totalCost += item.qty * c;
 
@@ -1418,7 +1368,7 @@ payBtn.onclick = ()=>{
     method,
     items: ventaItems,
     total: totalVenta,
-    totalCost: totalCost,          // 👈 guardamos costo total del ticket
+    totalCost: totalCost,
     dayKey,
     date: new Date().toISOString()
   });
@@ -1427,7 +1377,6 @@ payBtn.onclick = ()=>{
   ticketCounter++;
   saveTicketCounter();
 
-  // Auto-backup por venta (si hay carpeta configurada)
   try{ autoBackupOnSale(currentTicket); }catch(e){}
 
   cart=[];
@@ -1463,12 +1412,9 @@ function generateTicketPDF(items,total,client,ticketNo,method){
     }
   };
 
-  img.onerror = function(){
-    drawHeader();
-  };
+  img.onerror = function(){ drawHeader(); };
 
   function drawHeader(){
-
     doc.setFontSize(22);
     doc.setFont(undefined,'bold');
     doc.text("Construcciones Globales", centerX, y, null, null, 'center');
@@ -1491,7 +1437,6 @@ function generateTicketPDF(items,total,client,ticketNo,method){
     doc.text(`Fecha: ${new Date().toLocaleString()}`, 10, y);
     y += 12;
 
-    // ===== ENCABEZADO DE TABLA (con P. UNIT) =====
     doc.setFontSize(14);
     doc.setFont(undefined,'bold');
     doc.text("Cant", 10, y);
@@ -1505,7 +1450,6 @@ function generateTicketPDF(items,total,client,ticketNo,method){
     doc.line(10, y, rightX, y);
     y += 4;
 
-    // ===== PRODUCTOS (con precio unitario) =====
     doc.setFontSize(13);
     items.forEach(item=>{
       const qtyText = item.qty.toString();
@@ -1596,11 +1540,7 @@ function renderCloseResult(){
 }
 
 calcCloseBtn.onclick = renderCloseResult;
-
-printCloseBtn.onclick = ()=>{
-  const r = calculateClose();
-  generateCloseTicketPDF(r);
-};
+printCloseBtn.onclick = ()=> generateCloseTicketPDF(calculateClose());
 
 function generateCloseTicketPDF(r){
   const doc = new jsPDF({unit:'mm', format:[80,270]});
@@ -1665,7 +1605,6 @@ function generateCloseTicketPDF(r){
     row("DIFERENCIA", "", sign(r.totalDiff));
     doc.setFont(undefined,'normal');
 
-    // ===== NUEVO: COSTO Y GANANCIA =====
     y+=1; line();
     doc.setFont(undefined,'bold');
     row("COSTO VEND.", "", formatQ(r.totalCost));
@@ -1695,6 +1634,32 @@ renderSales();
 renderCloseResult();
 resetProductForm();
 renderPurchases();
+
+/* ===== INIT BACKUP HANDLE ===== */
+(async function initBackupHandle(){
+  try{
+    if(!window.isSecureContext) return;
+    backupDirHandle = await idbGetHandle("backupDir");
+    if(backupDirHandle){
+      await verifyPermission(backupDirHandle, true);
+    }
+  }catch(e){ console.warn(e); }
+})();
+
+const pickBackupDirBtn = document.getElementById('pickBackupDirBtn');
+const manualBackupBtn = document.getElementById('manualBackupBtn');
+const restoreBackupBtn = document.getElementById('restoreBackupBtn');
+const restoreFile = document.getElementById('restoreFile');
+
+if(pickBackupDirBtn) pickBackupDirBtn.onclick = pickBackupDirectory;
+if(manualBackupBtn) manualBackupBtn.onclick = manualBackup;
+if(restoreBackupBtn) restoreBackupBtn.onclick = triggerRestorePick;
+if(restoreFile){
+  restoreFile.addEventListener("change", (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(f) restoreFromFile(f);
+  });
+}
 </script>
 
 </body>
