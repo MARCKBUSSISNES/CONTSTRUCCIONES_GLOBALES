@@ -303,9 +303,9 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
         <button id="addProductBtn" class="big-button">Agregar producto</button>
         <button id="cancelEditBtn" class="ghost" style="display:none;">Cancelar edición</button>
         <button id="clearProductsBtn" class="danger">Borrar todo</button>
-        <button id="exportProductsBtn" class="ghost">Descargar inventario PDF</button>
+        <!-- CAMBIO: etiqueta acorde a lo que hace -->
+        <button id="exportProductsBtn" class="ghost">Descargar inventario Excel</button>
       </div>
-
 
       <div class="sub-card" id="invSummary" style="margin-top:12px;">
         <h3 style="margin-bottom:6px;">Resumen de inventario</h3>
@@ -316,7 +316,6 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
       <div id="editHint" class="small-note" style="margin-top:8px;display:none;">
         Editando producto: <strong id="editNameLabel"></strong> (se guardará con código 3336)
       </div>
-
 
       <div class="sub-card" id="purchasePanel">
         <h2>Registrar compras (incrementa inventario)</h2>
@@ -355,22 +354,8 @@ hr{border:none;border-top:1px solid #333;margin:14px 0;}
         <ul id="purchasesList" class="list"></ul>
       </div>
 
-
       <hr/>
-
-      <!-- ✅ NUEVO: Selector de orden A-Z / Z-A -->
-      <div class="flex-row" style="justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap;">
-        <h3 style="margin:0;">Productos disponibles</h3>
-
-        <div class="flex-row" style="gap:8px;align-items:center;">
-          <label style="margin:0;">Orden</label>
-          <select id="sortOrder" style="width:160px;margin:0;">
-            <option value="AZ">A - Z</option>
-            <option value="ZA">Z - A</option>
-          </select>
-        </div>
-      </div>
-
+      <h3>Productos disponibles</h3>
       <ul id="productsList" class="list"></ul>
     </div>
   </section>
@@ -524,18 +509,6 @@ const KEY_TICKET = 'mb_ticket_counter_pdf';
 const KEY_PURCHASES = 'mb_purchases_pdf';
 const INVENTORY_ACCESS_CODE = '12345';
 
-// ✅ NUEVO: preferencia de orden A-Z / Z-A
-const sortOrderEl = document.getElementById('sortOrder');
-let sortOrder = localStorage.getItem('mb_sort_order') || 'AZ';
-if(sortOrderEl){
-  sortOrderEl.value = sortOrder;
-  sortOrderEl.addEventListener('change', ()=>{
-    sortOrder = (sortOrderEl.value === 'ZA') ? 'ZA' : 'AZ';
-    localStorage.setItem('mb_sort_order', sortOrder);
-    renderProducts();
-  });
-}
-
 let products = JSON.parse(localStorage.getItem(KEY_PRODUCTS)||'[]');
 let sales = JSON.parse(localStorage.getItem(KEY_SALES)||'[]');
 let ticketCounter = parseInt(localStorage.getItem(KEY_TICKET)||'1',10);
@@ -567,7 +540,7 @@ const p_stock = document.getElementById('p_stock');
 const editHint = document.getElementById('editHint');
 const editNameLabel = document.getElementById('editNameLabel');
 
-/* COMPRAS */
+/* COMPRAS (ENTRADAS A INVENTARIO) */
 const buyProductSelect = document.getElementById('buyProductSelect');
 const buyQty = document.getElementById('buyQty');
 const buyUnitCost = document.getElementById('buyUnitCost');
@@ -575,7 +548,6 @@ const buyDate = document.getElementById('buyDate');
 const buyBtn = document.getElementById('buyBtn');
 const clearPurchasesBtn = document.getElementById('clearPurchasesBtn');
 const purchasesList = document.getElementById('purchasesList');
-
 /* BUSCAR PRODUCTO */
 const filterInput = document.getElementById('filterInput');
 const filterQty = document.getElementById('filterQty');
@@ -610,6 +582,11 @@ const calcCloseBtn = document.getElementById('calcCloseBtn');
 const printCloseBtn = document.getElementById('printCloseBtn');
 const closeResultEl = document.getElementById('closeResult');
 
+const pickBackupDirBtn = document.getElementById('pickBackupDirBtn');
+const manualBackupBtn = document.getElementById('manualBackupBtn');
+const restoreBackupBtn = document.getElementById('restoreBackupBtn');
+const restoreFile = document.getElementById('restoreFile');
+
 function saveProducts(){ localStorage.setItem(KEY_PRODUCTS, JSON.stringify(products)); }
 function saveSales(){ localStorage.setItem(KEY_SALES, JSON.stringify(sales)); }
 function saveTicketCounter(){ localStorage.setItem(KEY_TICKET, ticketCounter.toString()); }
@@ -625,8 +602,19 @@ function dateKeyFromDate(d){
 function todayKey(){ return dateKeyFromDate(new Date()); }
 function safeNumber(x){ const n = Number(x); return isFinite(n) ? n : 0; }
 
-/* ===== BACKUPS A CARPETA ===== */
+/* ✅ helper para export Excel sin romper HTML */
+function escapeHtml(str){
+  return String(str)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+/* ===== BACKUPS A CARPETA (File System Access API) ===== */
 let backupDirHandle = null;
+
 const HANDLE_DB = "mb_fs_handles_v1";
 const HANDLE_STORE = "handles";
 
@@ -768,7 +756,6 @@ async function autoBackupOnSale(ticketNo){
 function triggerRestorePick(){
   const ok = requireInventoryAccess('restaurar backup');
   if(!ok){ alert('Código incorrecto'); return; }
-  const restoreFile = document.getElementById('restoreFile');
   if(restoreFile) restoreFile.click();
 }
 
@@ -776,7 +763,6 @@ async function restoreFromFile(file){
   const ok = requireInventoryAccess('restaurar backup');
   if(!ok){ alert('Código incorrecto'); return; }
 
-  const restoreFile = document.getElementById('restoreFile');
   try{
     const text = await file.text();
     const data = JSON.parse(text);
@@ -850,24 +836,17 @@ if(adminToggleBtn){
     if(!ok){ alert("Código incorrecto"); return; }
     inventoryUnlocked = true;
     updateAdminToggle();
-    alert("Modo admin ON. Ya puedes entrar al inventario sin volver a ingresar código (hasta que lo apagues).");
+    alert("Modo admin ON. Ya puedes entrar a inventario sin volver a ingresar código (hasta que lo apagues).");
   });
 }
 
-cancelEditBtn.onclick = () => resetProductForm();
+cancelEditBtn.onclick = () => { resetProductForm(); };
 
 /* ===== PRODUCTOS ===== */
-/* ✅ MODIFICADO: orden configurable A-Z / Z-A sin alterar products[] */
 function getProductsSortedView(){
-  const dir = (sortOrder === 'ZA') ? -1 : 1;
-
   return (products || [])
     .map((p, idx)=>({ ...p, _idx: idx }))
-    .sort((a,b)=>{
-      const an = (a.name||'').toString();
-      const bn = (b.name||'').toString();
-      return dir * an.localeCompare(bn, 'es', {sensitivity:'base'});
-    });
+    .sort((a,b)=> (a.name||'').localeCompare((b.name||''), 'es', {sensitivity:'base'}));
 }
 
 function renderProducts(){
@@ -918,7 +897,7 @@ function renderProducts(){
     view.forEach((p)=>{
       const o2 = document.createElement('option');
       o2.value = p._idx;
-      o2.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '' );
+      o2.textContent = p.name + (p.stock !== undefined ? ` (${p.stock})` : '');
       buyProductSelect.appendChild(o2);
     });
   }
@@ -981,10 +960,7 @@ window.deleteProduct = deleteProduct;
 
 function editProduct(idx){
   const code = prompt("Ingrese código para editar producto:");
-  if(code !== '3336'){
-    alert("Código incorrecto");
-    return;
-  }
+  if(code !== '3336'){ alert("Código incorrecto"); return; }
 
   const p = products[idx];
   switchView('inventario');
@@ -1004,15 +980,9 @@ window.editProduct = editProduct;
 
 function restockProduct(idx){
   const code = prompt("Ingrese código para agregar stock:");
-  if(code !== '3336'){
-    alert("Código incorrecto");
-    return;
-  }
+  if(code !== '3336'){ alert("Código incorrecto"); return; }
   const qty = parseInt(prompt("¿Cuánto stock desea agregar? (Ej: 10)"), 10);
-  if(!Number.isFinite(qty) || qty <= 0){
-    alert("Cantidad inválida");
-    return;
-  }
+  if(!Number.isFinite(qty) || qty <= 0){ alert("Cantidad inválida"); return; }
   products[idx].stock = (parseInt(products[idx].stock,10) || 0) + qty;
   saveProducts();
   renderProducts();
@@ -1110,7 +1080,10 @@ function renderPurchases(){
     purchasesList.appendChild(li);
   });
 }
-if(buyDate){ try{ buyDate.value = todayKey(); }catch(e){} }
+
+if(buyDate){
+  try{ buyDate.value = todayKey(); }catch(e){}
+}
 
 if(buyBtn){
   buyBtn.onclick = ()=>{
@@ -1293,15 +1266,66 @@ function reprintTicket(ticketNo){
 }
 window.reprintTicket = reprintTicket;
 
+/* ✅ EXPORT INVENTARIO EXCEL ORDENADO A-Z */
 exportProductsBtn.onclick = ()=>{
-  const doc = new jsPDF();
-  doc.setFontSize(14);
-  doc.text('Inventario de productos',20,20);
-  const rows = products.map(p=>[p.name, formatQ(p.cost), formatQ(p.price), p.stock]);
-  doc.autoTable({head:[['Producto','Costo','Venta','Stock']], body:rows, startY:30});
-  doc.save('inventario.pdf');
+  const sorted = (products || [])
+    .slice()
+    .sort((a,b)=> (a.name||'').toString().localeCompare((b.name||'').toString(), 'es', {sensitivity:'base'}));
+
+  const html = `
+  <html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Inventario</title>
+    <style>
+      body{font-family:Arial, sans-serif; padding:16px;}
+      h2{margin:0 0 10px 0;}
+      .meta{color:#666; font-size:12px; margin-bottom:12px;}
+      table{border-collapse:collapse; width:100%;}
+      th,td{border:1px solid #cfcfcf; padding:8px; font-size:12px;}
+      th{background:#f2f2f2; font-weight:700;}
+      td.num{text-align:right;}
+      tr:nth-child(even){background:#fafafa;}
+    </style>
+  </head>
+  <body>
+    <h2>Inventario de productos</h2>
+    <div class="meta">Generado: ${new Date().toLocaleString()}</div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Producto</th>
+          <th>Costo (Q)</th>
+          <th>Venta (Q)</th>
+          <th>Stock</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sorted.map((p,i)=>`
+          <tr>
+            <td class="num">${i+1}</td>
+            <td>${escapeHtml(p.name||'')}</td>
+            <td class="num">${Number(p.cost||0).toFixed(2)}</td>
+            <td class="num">${Number(p.price||0).toFixed(2)}</td>
+            <td class="num">${parseInt(p.stock||0,10)||0}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  </body>
+  </html>`;
+
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `inventario_${todayKey()}.xls`;
+  document.body.appendChild(a);
+  try{ a.click(); }catch(e){ console.warn(e); }
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); try{ a.remove(); }catch(e){} }, 500);
 };
 
+/* Export ventas del día PDF */
 exportDailyBtn.onclick = ()=>{
   const dayKey = salesDateEl.value || todayKey();
   const { daySales, total, byMethod, totalCost, profit } = computeDayTotals(dayKey);
@@ -1330,6 +1354,26 @@ exportDailyBtn.onclick = ()=>{
   });
 
   doc.save(`ventas_${dayKey}.pdf`);
+
+  (async function initBackupHandle(){
+    try{
+      if(!window.isSecureContext) return;
+      backupDirHandle = await idbGetHandle("backupDir");
+      if(backupDirHandle){
+        await verifyPermission(backupDirHandle, true);
+      }
+    }catch(e){ console.warn(e); }
+  })();
+
+  if(pickBackupDirBtn) pickBackupDirBtn.onclick = pickBackupDirectory;
+  if(manualBackupBtn) manualBackupBtn.onclick = manualBackup;
+  if(restoreBackupBtn) restoreBackupBtn.onclick = triggerRestorePick;
+  if(restoreFile){
+    restoreFile.addEventListener("change", (e)=>{
+      const f = e.target.files && e.target.files[0];
+      if(f) restoreFromFile(f);
+    });
+  }
 };
 
 /* ===== COBRO + TICKET ===== */
@@ -1353,7 +1397,6 @@ payBtn.onclick = ()=>{
     prod.stock -= item.qty;
 
     totalVenta += item.qty * item.price;
-
     const c = safeNumber(item.cost);
     totalCost += item.qty * c;
 
@@ -1540,7 +1583,11 @@ function renderCloseResult(){
 }
 
 calcCloseBtn.onclick = renderCloseResult;
-printCloseBtn.onclick = ()=> generateCloseTicketPDF(calculateClose());
+
+printCloseBtn.onclick = ()=>{
+  const r = calculateClose();
+  generateCloseTicketPDF(r);
+};
 
 function generateCloseTicketPDF(r){
   const doc = new jsPDF({unit:'mm', format:[80,270]});
@@ -1634,32 +1681,6 @@ renderSales();
 renderCloseResult();
 resetProductForm();
 renderPurchases();
-
-/* ===== INIT BACKUP HANDLE ===== */
-(async function initBackupHandle(){
-  try{
-    if(!window.isSecureContext) return;
-    backupDirHandle = await idbGetHandle("backupDir");
-    if(backupDirHandle){
-      await verifyPermission(backupDirHandle, true);
-    }
-  }catch(e){ console.warn(e); }
-})();
-
-const pickBackupDirBtn = document.getElementById('pickBackupDirBtn');
-const manualBackupBtn = document.getElementById('manualBackupBtn');
-const restoreBackupBtn = document.getElementById('restoreBackupBtn');
-const restoreFile = document.getElementById('restoreFile');
-
-if(pickBackupDirBtn) pickBackupDirBtn.onclick = pickBackupDirectory;
-if(manualBackupBtn) manualBackupBtn.onclick = manualBackup;
-if(restoreBackupBtn) restoreBackupBtn.onclick = triggerRestorePick;
-if(restoreFile){
-  restoreFile.addEventListener("change", (e)=>{
-    const f = e.target.files && e.target.files[0];
-    if(f) restoreFromFile(f);
-  });
-}
 </script>
 
 </body>
